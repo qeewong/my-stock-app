@@ -18,7 +18,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# 股票清單與 11 隻主要板塊 ETF
+# 股票清單與板塊 ETF
 MY_TICKERS = [
     "AAPL", "NVDA", "TSLA", "GOOGL", "AMZN", "ONDS", "RCAT", "IONQ", "MP", "NBIS", 
     "CRWV", "APLD", "NVTS", "ALAB", "RKLD", "AVAV", "KTOS", "CRWD", "VRT", "PLTR", 
@@ -27,7 +27,6 @@ MY_TICKERS = [
     "TEM", "UNH", "OSCR", "SOFI", "HOOD", "CRCL", "JPM", "V", "UPST", "AEM", 
     "UBER", "NFLX", "EOSE", "BRK-B"
 ]
-
 SECTOR_ETFS = ["XLF", "XLK", "XLV", "XLP", "XLE", "XLB", "XLI", "XLC", "XLU", "XLRE", "XLY"]
 
 @st.cache_data(ttl=300)
@@ -41,8 +40,9 @@ def fetch_all_market_data(tickers, etfs):
 
 raw_data, sync_time = fetch_all_market_data(MY_TICKERS, SECTOR_ETFS)
 
-# --- 2. 頁面標題 ---
+# --- 2. 標題 ---
 st.markdown('<p class="main-title">🎯 NAT LIST</p>', unsafe_allow_html=True)
-st.markdown(f'<p class="sync-info"><b>SYNCED</b>: {sync_time} HKT | <b>DATA STATE</b>: LIVE</p>', unsafe_allow_html=True)
+st.markdown(f'<p class="sync-info"><b>SYNCED</b>: {sync_time} HKT</p>', unsafe_allow_html=True)
 
-tab_watch, tab_etf, tab_sector = st.tabs(["
+# --- 3. 分頁功能 ---
+tab_
