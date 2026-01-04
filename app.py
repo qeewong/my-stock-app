@@ -68,7 +68,34 @@ vcp_stocks = df_summary[df_summary['VCP 診斷'] == "🎯 VCP FORMING"]
 col_a.metric("VCP 候選股數量", len(vcp_stocks))
 col_b.write("💡 **VCP 提示：** 尋找振幅小於 5% 且 RS 強勁的標的。")
 
-st.dataframe(df_summary.style.format({"RS (3M)": "{:.2%}"}).highlight_between(left="🎯 VCP FORMING", column="VCP 診斷", color="#1a472a"), use_container_width=True)
+# --- 修正後的表格顯示代碼 ---
+if not df_summary.empty:
+    # 1. 確保數值列是正確的浮點數格式，防止渲染錯誤
+    df_summary['RS (3M)'] = pd.to_numeric(df_summary['RS (3M)'], errors='coerce').fillna(0)
+    df_summary['當前振幅(%)'] = pd.to_numeric(df_summary['當前振幅(%)'], errors='coerce').fillna(0)
+
+    # 2. 使用更相容的表格美化寫法
+    st.subheader("📋 實時狀態與排名")
+    
+    # 建立一個 Styler 對象
+    styler = df_summary.style.format({
+        "RS (3M)": "{:.2%}",
+        "當前振幅(%)": "{:.2f}%",
+        "現價": "{:.2f}",
+        "MA50": "{:.2f}"
+    })
+
+    # 針對 VCP 診斷列進行條件高亮 (改用 applymap 以獲得更好的相容性)
+    def highlight_vcp(val):
+        color = '#1a472a' if val == "🎯 VCP FORMING" else ''
+        return f'background-color: {color}'
+
+    styler = styler.applymap(highlight_vcp, subset=['VCP 診斷'])
+    
+    # 加入 RS 的顏色漸變
+    styler = styler.background_gradient(subset=["RS (3M)"], cmap="RdYlGn")
+
+    st.dataframe(styler, use_container_width=True)
 
 st.divider()
 
