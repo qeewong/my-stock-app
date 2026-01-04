@@ -6,18 +6,19 @@ from plotly.subplots import make_subplots
 from datetime import datetime
 import pytz
 
-# --- 1. 頁面配置 ---
+# --- 1. 頁面基礎配置 ---
 st.set_page_config(page_title="NAT LIST", layout="wide")
 
 st.markdown("""
     <style>
     .stApp { background-color: #f4f7f9; }
-    .main-title { font-size: 36px; font-weight: 900; color: #0d47a1; }
+    .main-title { font-size: 36px; font-weight: 900; color: #0d47a1; margin-bottom: 5px; }
+    .sync-info { color: #546e7a; font-size: 14px; margin-bottom: 20px; }
     .stTabs [data-baseweb="tab"] { font-weight: 600; padding: 10px 20px; }
     </style>
     """, unsafe_allow_html=True)
 
-# 股票清單與 11 隻板塊 ETF
+# 股票清單與 11 隻主要板塊 ETF
 MY_TICKERS = [
     "AAPL", "NVDA", "TSLA", "GOOGL", "AMZN", "ONDS", "RCAT", "IONQ", "MP", "NBIS", 
     "CRWV", "APLD", "NVTS", "ALAB", "RKLD", "AVAV", "KTOS", "CRWD", "VRT", "PLTR", 
@@ -40,17 +41,8 @@ def fetch_all_market_data(tickers, etfs):
 
 raw_data, sync_time = fetch_all_market_data(MY_TICKERS, SECTOR_ETFS)
 
-# --- 2. 頁面頭部 ---
+# --- 2. 頁面標題 ---
 st.markdown('<p class="main-title">🎯 NAT LIST</p>', unsafe_allow_html=True)
-st.markdown(f"**SYNCED**: `{sync_time} HKT` | **LIVE DATA**")
+st.markdown(f'<p class="sync-info"><b>SYNCED</b>: {sync_time} HKT | <b>DATA STATE</b>: LIVE</p>', unsafe_allow_html=True)
 
-tab_watch, tab_etf, tab_sector = st.tabs(["📊 Watchlist", "📉 ETF Basis", "🧱 Sector View"])
-
-# --- TAB 1: WATCHLIST (保持之前修復好的狀態) ---
-with tab_watch:
-    summary = []
-    for t in MY_TICKERS:
-        if t not in raw_data['Close'].columns: continue
-        c = raw_data['Close'][t]
-        s = raw_data['Close']['SPY']
-        rs_3m = ( (c/s).iloc[-1] / (c/s).iloc
+tab_watch, tab_etf, tab_sector = st.tabs(["
