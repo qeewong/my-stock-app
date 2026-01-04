@@ -3,114 +3,105 @@ import pandas as pd
 import yfinance as yf
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import numpy as np
+from datetime import datetime
 
-st.set_page_config(page_title="VCP & RS 專業交易終端", layout="wide")
+# 網頁基礎設定
+st.set_page_config(page_title="RS Elite Dashboard", layout="wide")
 
-# --- VCP 識別邏輯函數 ---
-def detect_vcp(df_hist):
-    """
-    簡單 VCP 診斷：檢查最近 3 個波段的振幅是否遞減
-    """
-    # 獲取最近 60 天的高低點
-    high_60 = df_hist['High'].rolling(60).max().iloc[-1]
-    low_60 = df_hist['Low'].rolling(60).min().iloc[-1]
-    total_depth = (high_60 - low_60) / high_60
-    
-    # 獲取最近 3 個 20 天周期的波動率 (ATR 簡化版)
-    vol_1 = (df_hist['High'].iloc[-60:-40].max() - df_hist['Low'].iloc[-60:-40].min()) / df_hist['Close'].iloc[-40]
-    vol_2 = (df_hist['High'].iloc[-40:-20].max() - df_hist['Low'].iloc[-40:-20].min()) / df_hist['Close'].iloc[-20]
-    vol_3 = (df_hist['High'].iloc[-20:].max() - df_hist['Low'].iloc[-20:].min()) / df_hist['Close'].iloc[-1]
-    
-    # VCP 條件：波動收窄且價格接近高位
-    is_vcp = vol_3 < vol_2 < vol_1 and df_hist['Close'].iloc[-1] > high_60 * 0.9
-    
-    status = "🎯 VCP FORMING" if is_vcp else "---"
-    return status, round(vol_3 * 100, 2)
+# 自定義 CSS：打造深色專業介面
+st.markdown("""
+    <style>
+    .main { background-color: #0e1117; }
+    div[data-testid="stMetricValue"] { color: #00FF00; }
+    .stDataFrame { border: 1px solid #30363d; }
+    </style>
+    """, unsafe_allow_html=True)
+
+st.title("🛡️ 專業級股票相對強弱 (RS) 監控系統")
+
+# 側邊欄：自選股輸入
+st.sidebar.header("📋 我的自選清單")
+default_list = "NVDA, TSLA, AAPL, MSFT, AMD, AMZN, META, GOOGL, NFLX, SMCI"
+ticker_input = st.sidebar.text_area("輸入代號 (逗號分隔)", default_list, height=150)
+ticker_list = [t.strip().upper() for t in ticker_input.replace('\n', ',').split(',') if t.strip()]
 
 @st.cache_data(ttl=3600)
-def fetch_vcp_data(tickers):
+def get_advanced_data(tickers):
+    # 抓取 1 年數據用於計算
     all_symbols = tickers + ['SPY']
-    df = yf.download(all_symbols, period='1y', progress=False)
+    df = yf.download(all_symbols, period='1y', progress=False)['Close']
     
     results = []
     for t in tickers:
-        if t not in df['Close'].columns: continue
-        
-        t_data = df.xs(t, axis=1, level=1)
-        vcp_status, curr_vol = detect_vcp(t_data)
-        
-        # RS 計算
-        rel_perf = (df['Close'][t] / df['Close']['SPY'])
-        rs_3m = (rel_perf.iloc[-1] / rel_perf.iloc[-63]) - 1
+        if t not in df.columns: continue
+        # 計算 RS 分數 (基於當前 vs 基準)
+        rel_perf = (df[t] / df['SPY'])
+        rs_score = (rel_perf.iloc[-1] / rel_perf.iloc[-63]) - 1 # 3個月相對強弱
         
         results.append({
             "代號": t,
-            "現價": t_data['Close'].iloc[-1],
-            "VCP 診斷": vcp_status,
-            "當前振幅(%)": curr_vol,
-            "RS (3M)": rs_3m,
-            "MA50": t_data['Close'].rolling(50).mean().iloc[-1]
+            "現價": df[t].iloc[-1],
+            "今日漲跌": (df[t].iloc[-1] / df[t].iloc[-2]) - 1,
+            "RS強弱值": rs_score,
+            "距52週高位": (df[t].iloc[-1] / df[t].max()) - 1
         })
-    return pd.DataFrame(results), df
+    return pd.DataFrame(results).sort_values("RS強弱值", ascending=False), df
 
-# --- 介面佈局 ---
-st.title("🧙‍♂️ VCP 形態與相對強弱監控")
+df_res, raw_data = get_advanced_data(ticker_list)
 
-tickers_input = st.sidebar.text_area("輸入代號", "NVDA, TSLA, AAPL, AMZN, META, MSFT, AMD, NFLX, SMCI, AVGO", height=150)
-ticker_list = [t.strip().upper() for t in tickers_input.replace('\n', ',').split(',') if t.strip()]
-
-df_summary, raw_data = fetch_vcp_data(ticker_list)
-
-# 顯示看板
-col_a, col_b = st.columns(2)
-vcp_stocks = df_summary[df_summary['VCP 診斷'] == "🎯 VCP FORMING"]
-col_a.metric("VCP 候選股數量", len(vcp_stocks))
-col_b.write("💡 **VCP 提示：** 尋找振幅小於 5% 且 RS 強勁的標的。")
-
-# --- 修正後的表格顯示代碼 ---
-if not df_summary.empty:
-    # 1. 確保數值列是正確的浮點數格式，防止渲染錯誤
-    df_summary['RS (3M)'] = pd.to_numeric(df_summary['RS (3M)'], errors='coerce').fillna(0)
-    df_summary['當前振幅(%)'] = pd.to_numeric(df_summary['當前振幅(%)'], errors='coerce').fillna(0)
-
-    # 2. 使用更相容的表格美化寫法
-    st.subheader("📋 實時狀態與排名")
-    
-    # 建立一個 Styler 對象
-    styler = df_summary.style.format({
-        "RS (3M)": "{:.2%}",
-        "當前振幅(%)": "{:.2f}%",
-        "現價": "{:.2f}",
-        "MA50": "{:.2f}"
-    })
-
-    # 針對 VCP 診斷列進行條件高亮 (改用 applymap 以獲得更好的相容性)
-    def highlight_vcp(val):
-        color = '#1a472a' if val == "🎯 VCP FORMING" else ''
-        return f'background-color: {color}'
-
-    styler = styler.applymap(highlight_vcp, subset=['VCP 診斷'])
-    
-    # 加入 RS 的顏色漸變
-    styler = styler.background_gradient(subset=["RS (3M)"], cmap="RdYlGn")
-
-    st.dataframe(styler, use_container_width=True)
+# 第一部分：RS 排名列表
+st.subheader("📊 相對強度排名 (基於 SPY 基準)")
+st.dataframe(
+    df_res.style.format({
+        "現價": "{:.2f}", "今日漲跌": "{:.2%}", 
+        "RS強弱值": "{:.2%}", "距52週高位": "{:.2%}"
+    }).background_gradient(subset=["RS強弱值"], cmap="RdYlGn"),
+    use_container_width=True
+)
 
 st.divider()
 
-# 圖表詳細分析
-target = st.selectbox("🎯 選擇個股查看 VCP 結構", df_summary['代號'].tolist())
-hist = raw_data.xs(target, axis=1, level=1).iloc[-120:]
+# 第二部分：一模一樣的高低比較圖 (Normalization)
+st.subheader("📉 價格走勢與 SPY 即時對比 (歸一化)")
+selected_stock = st.selectbox("選擇要對比的股票", df_res['代號'].tolist())
 
-fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.7, 0.3])
+# 時間範圍選擇
+period = st.radio("時間範圍", ["3個月", "6個月", "1年"], horizontal=True)
+days = {"3個月": 63, "6個月": 126, "1年": 252}[period]
 
-# K 線與均線
-fig.add_trace(go.Candlestick(x=hist.index, open=hist['Open'], high=hist['High'], low=hist['Low'], close=hist['Close'], name="K線"), row=1, col=1)
-fig.add_trace(go.Scatter(x=hist.index, y=hist['Close'].rolling(50).mean(), name="50MA", line=dict(color='blue')), row=1, col=1)
+# 準備對比數據：將起點設為 100
+stock_series = raw_data[selected_stock].iloc[-days:]
+spy_series = raw_data['SPY'].iloc[-days:]
 
-# 成交量 (VCP 的關鍵是縮量)
-fig.add_trace(go.Bar(x=hist.index, y=hist['Volume'], name="成交量", marker_color='gray', opacity=0.5), row=2, col=1)
+norm_stock = (stock_series / stock_series.iloc[0]) * 100
+norm_spy = (spy_series / spy_series.iloc[0]) * 100
+rs_line = (stock_series / spy_series) / (stock_series.iloc[0] / spy_series.iloc[0]) * 100
 
-fig.update_layout(template="plotly_dark", height=700, xaxis_rangeslider_visible=False)
+# 建立雙軸圖表
+fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+# 1. 股票走勢 (藍色)
+fig.add_trace(go.Scatter(x=norm_stock.index, y=norm_stock, name=f"{selected_stock} (歸一化)", 
+                         line=dict(color='#00D4FF', width=3)), secondary_y=False)
+
+# 2. SPY 走勢 (橘色/灰色)
+fig.add_trace(go.Scatter(x=norm_spy.index, y=norm_spy, name="S&P 500 (SPY)", 
+                         line=dict(color='#FFBB00', width=2, dash='dot')), secondary_y=False)
+
+# 3. RS Line (螢光綠) - 這是最重要的指標
+fig.add_trace(go.Scatter(x=rs_line.index, y=rs_line, name="RS Line (強弱線)", 
+                         line=dict(color='#00FF00', width=2)), secondary_y=True)
+
+fig.update_layout(
+    template="plotly_dark",
+    height=600,
+    hovermode="x unified",
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+)
+
+fig.update_yaxes(title_text="價格指數 (起點=100)", secondary_y=False)
+fig.update_yaxes(title_text="RS 強度比率", secondary_y=True, showgrid=False)
+
 st.plotly_chart(fig, use_container_width=True)
+
+st.caption("💡 解讀：當藍線在黃線上方，代表該股跑贏大盤；當綠色 RS Line 向上爬升，代表強度增加。")
