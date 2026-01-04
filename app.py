@@ -4,109 +4,132 @@ import yfinance as yf
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-# --- 網頁配置 ---
-st.set_page_config(page_title="RS & VCP 專業監控", layout="wide")
+st.set_page_config(page_title="專業 RS 交易終端", layout="wide")
 
-# --- 1. 你的自選股票清單 ---
-MY_TICKERS = [
-    "AAPL", "NVDA", "TSLA", "GOOGL", "AMZN", "ONDS", "RCAT", "IONQ", "MP", "NBIS", 
-    "CRWV", "APLD", "NVTS", "ALAB", "RKLD", "AVAV", "KTOS", "CRWD", "VRT", "PLTR", 
-    "META", "RDDT", "RBLX", "SNOW", "SOUN", "SERV", "FIG", "APP", "ADBE", "TSM", 
-    "AMD", "MRVL", "ORCL", "AVGO", "MU", "OKLO", "LEU", "VST", "NNE", "HIMS", 
-    "TEM", "UNH", "OSCR", "SOFI", "HOOD", "CRCL", "JPM", "V", "UPST", "AEM", 
-    "UBER", "NFLX", "EOSE", "BRK-B"
-]
+# --- 自定義風格 ---
+st.markdown("""
+    <style>
+    .stApp { background-color: #0b0e11; color: #e1e4e8; }
+    .status-strong { color: #00ff00; font-weight: bold; border: 1px solid #00ff00; padding: 2px 5px; border-radius: 3px; }
+    .status-bear { color: #ff4b4b; font-weight: bold; border: 1px solid #ff4b4b; padding: 2px 5px; border-radius: 3px; }
+    </style>
+    """, unsafe_allow_html=True)
 
-SECTOR_MAP = {
-    "Technology": "電子科技", "Communication Services": "通訊服務",
-    "Consumer Cyclical": "週期性消費", "Financial Services": "金融服務",
-    "Healthcare": "醫療保健", "Energy": "能源", "Industrials": "工業",
-    "Basic Materials": "基礎材料", "Utilities": "公共事業", "Real Estate": "房地產"
-}
+# --- 功能函數 ---
+def get_status(row):
+    # 簡單邏輯判定狀態
+    if row['RS (3M)'] > 0.05 and row['現價'] > row['MA50']:
+        return "🔥 VERY STRONG"
+    elif row['現價'] < row['MA20'] and row['RS (3M)'] < 0:
+        return "🐻 TURNING BEAR"
+    elif row['現價'] > row['MA10']:
+        return "📈 BULLISH"
+    else:
+        return "⚖️ NEUTRAL"
 
-# --- 2. 核心功能函數 ---
 @st.cache_data(ttl=3600)
-def fetch_everything(tickers):
+def fetch_full_data(tickers):
     all_symbols = tickers + ['SPY']
-    data = yf.download(all_symbols, period='1y', progress=False)
-    close_df = data['Close']
+    # 抓取足夠計算 50MA 的數據
+    df = yf.download(all_symbols, period='1y', progress=False)
+    close_df = df['Close']
     
-    summary_list = []
+    results = []
     for t in tickers:
         if t not in close_df.columns: continue
-        
-        # 計算指標
+        # 計算均線
         ma10 = close_df[t].rolling(10).mean().iloc[-1]
         ma20 = close_df[t].rolling(20).mean().iloc[-1]
         ma50 = close_df[t].rolling(50).mean().iloc[-1]
         
-        # 修復後的 RS 計算邏輯
+        # 相對強弱
         rel_perf = (close_df[t] / close_df['SPY'])
         rs_3m = (rel_perf.iloc[-1] / rel_perf.iloc[-63]) - 1
         
-        try:
-            info = yf.Ticker(t).info
-            sector = SECTOR_MAP.get(info.get('sector', 'Unknown'), info.get('sector', '其他'))
-        except:
-            sector = "未知"
-
-        summary_list.append({
-            "代號": t, "板塊": sector, "現價": close_df[t].iloc[-1],
-            "今日漲跌": (close_df[t].iloc[-1] / close_df[t].iloc[-2]) - 1,
-            "RS (3M)": rs_3m, "MA10": ma10, "MA20": ma20, "MA50": ma50,
-            "VCP診斷": "🎯 VCP" if (rs_3m > 0 and close_df[t].iloc[-1] > ma50) else "---"
+        results.append({
+            "代號": t, "現價": close_df[t].iloc[-1],
+            "MA10": ma10, "MA20": ma20, "MA50": ma50,
+            "RS (3M)": rs_3m,
+            "今日漲跌": (close_df[t].iloc[-1] / close_df[t].iloc[-2]) - 1
         })
     
-    return pd.DataFrame(summary_list), data
+    status_df = pd.DataFrame(results)
+    status_df['狀態'] = status_df.apply(get_status, axis=1)
+    return status_df, df
 
-# --- 3. 網頁渲染 ---
-st.title("🏹 個人強勢股 & 板塊監控終端")
+# --- 側邊欄與數據載入 ---
+st.sidebar.title("🛠️ 控制台")
+tickers_input = st.sidebar.text_area("輸入代號", "NVDA, TSLA, AAPL, AMZN, META, MSFT, AMD, GOOGL", height=200)
+ticker_list = [t.strip().upper() for t in tickers_input.replace('\n', ',').split(',') if t.strip()]
 
-with st.spinner('正在同步市場數據...'):
-    df_summary, raw_data = fetch_everything(MY_TICKERS)
+df_summary, raw_data = fetch_full_data(ticker_list)
+s
+# --- 介面佈局 ---
+st.title("🚀 RS Elite Market Scanner")
 
-# --- A. 板塊強度統計圖 ---
-st.subheader("📊 板塊平均相對強度 (RS)")
-sector_perf = df_summary.groupby("板塊")["RS (3M)"].mean().sort_values(ascending=True)
-fig_sector = go.Figure(go.Bar(
-    x=sector_perf.values, y=sector_perf.index, orientation='h',
-    marker_color=['#00ff00' if x > 0 else '#ff4b4b' for x in sector_perf.values]
-))
-fig_sector.update_layout(template="plotly_dark", height=300)
-st.plotly_chart(fig_sector, use_container_width=True)
+# --- B. 數據表格 (加入點擊跳轉功能) ---
+st.subheader("📋 實時排名與狀態 (點擊代號開啟 TradingView)")
 
-# --- B. 數據表格 ---
-st.dataframe(
-    df_summary.style.format({"今日漲跌": "{:.2%}", "RS (3M)": "{:.2%}", "現價": "{:.2f}"})
-    .background_gradient(subset=["RS (3M)"], cmap="RdYlGn"),
-    use_container_width=True
+# 建立跳轉連結的函式
+def make_clickable(ticker):
+    # TradingView 的標準跳轉網址
+    url = f"https://www.tradingview.com/chart/?symbol={ticker}"
+    return f'<a href="{url}" target="_blank">{ticker}</a>'
+
+# 複製一份表格用作顯示
+df_display = df_summary.copy()
+
+# 將代號欄位轉換為 HTML 連結
+df_display['代號'] = df_display['代號'].apply(make_clickable)
+
+# 使用 st.write + to_html 來渲染含連結的表格
+st.write(
+    df_display.style.format({
+        "今日漲跌": "{:.2%}", 
+        "RS (3M)": "{:.2%}", 
+        "現價": "{:.2f}"
+    })
+    .background_gradient(subset=["RS (3M)"], cmap="RdYlGn")
+    .to_html(escape=False, index=False), 
+    unsafe_allow_html=True
 )
 
-st.divider()
+st.write("") # 增加一點間距
 
-# --- C. 詳細圖表 (K線 + 均線 + 成交量 + RS Line) ---
-target = st.selectbox("🎯 選擇分析對象", df_summary['代號'].tolist())
-# 獲取單個股票的完整 OHLCV 數據
-hist = raw_data.xs(target, axis=1, level=1).iloc[-120:]
-hist_spy = raw_data.xs('SPY', axis=1, level=1).iloc[-120:]
+# 圖表區
+col1, col2 = st.columns([1, 3])
+with col1:
+    target = st.selectbox("🎯 選擇分析對象", df_summary['代號'].tolist())
+    target_info = df_summary[df_summary['代號'] == target].iloc[0]
+    st.metric("當前狀態", target_info['狀態'])
+    st.write(f"**MA10:** {target_info['MA10']:.2f}")
+    st.write(f"**MA20:** {target_info['MA20']:.2f}")
+    st.write(f"**MA50:** {target_info['MA50']:.2f}")
 
-# 建立三層子圖：K線、成交量、RS Line
-fig = make_subplots(rows=3, cols=1, shared_xaxes=True, 
-                    vertical_spacing=0.03, 
-                    row_heights=[0.5, 0.2, 0.3])
+with col2:
+    # 準備 K 線數據
+    hist = raw_data.xs(target, axis=1, level=1).iloc[-100:] # 取最近100天
+    hist_spy = raw_data.xs('SPY', axis=1, level=1).iloc[-100:]
+    
+    # 建立多子圖 (K線 + RS Line)
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
+                       vertical_spacing=0.05, row_heights=[0.7, 0.3])
 
-# 1. K線圖與均線
-fig.add_trace(go.Candlestick(x=hist.index, open=hist['Open'], high=hist['High'], low=hist['Low'], close=hist['Close'], name="K線"), row=1, col=1)
-fig.add_trace(go.Scatter(x=hist.index, y=hist['Close'].rolling(10).mean(), name="MA10", line=dict(color='yellow', width=1)), row=1, col=1)
-fig.add_trace(go.Scatter(x=hist.index, y=hist['Close'].rolling(50).mean(), name="MA50", line=dict(color='blue', width=1)), row=1, col=1)
+    # 1. 蠟燭圖 (Candlestick)
+    fig.add_trace(go.Candlestick(
+        x=hist.index, open=hist['Open'], high=hist['High'],
+        low=hist['Low'], close=hist['Close'], name=f"{target} 價格"
+    ), row=1, col=1)
 
-# 2. 成交量變色柱狀圖
-colors = ['red' if row['Open'] > row['Close'] else 'green' for index, row in hist.iterrows()]
-fig.add_trace(go.Bar(x=hist.index, y=hist['Volume'], name="成交量", marker_color=colors), row=2, col=1)
+    # 2. 加入均線
+    fig.add_trace(go.Scatter(x=hist.index, y=hist['Close'].rolling(10).mean(), name="MA10", line=dict(color='yellow', width=1)), row=1, col=1)
+    fig.add_trace(go.Scatter(x=hist.index, y=hist['Close'].rolling(20).mean(), name="MA20", line=dict(color='orange', width=1)), row=1, col=1)
+    fig.add_trace(go.Scatter(x=hist.index, y=hist['Close'].rolling(50).mean(), name="MA50", line=dict(color='blue', width=1)), row=1, col=1)
 
-# 3. RS Line
-rs_vals = (hist['Close'] / hist_spy['Close'])
-fig.add_trace(go.Scatter(x=hist.index, y=rs_vals, name="RS Line", line=dict(color='#00ff00', width=2)), row=3, col=1)
+    # 3. RS Line (相對於 SPY)
+    rs_vals = (hist['Close'] / hist_spy['Close'])
+    fig.add_trace(go.Scatter(x=hist.index, y=rs_vals, name="RS Line", line=dict(color='#00ff00', width=2)), row=2, col=1)
 
-fig.update_layout(template="plotly_dark", height=800, xaxis_rangeslider_visible=False, showlegend=False)
-st.plotly_chart(fig, use_container_width=True)
+    fig.update_layout(template="plotly_dark", height=700, showlegend=True,
+                      xaxis_rangeslider_visible=False)
+    st.plotly_chart(fig, use_container_width=True)
