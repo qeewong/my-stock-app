@@ -5,11 +5,12 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime
 import pytz
+import numpy as np
 
 # --- 1. 頁面配置 ---
 st.set_page_config(page_title="NAT LIST", layout="wide")
 
-# CSS 適配 iOS Dark Mode
+# CSS 適配 iOS Dark Mode (保持不變)
 st.markdown("""
     <style>
     :root { --bg-clr: #f4f7f9; --txt-clr: #1e1e1e; --title-clr: #0d47a1; }
@@ -32,6 +33,27 @@ MY_TICKERS = [
 ]
 SECTOR_ETFS = ["XLF", "XLK", "XLV", "XLP", "XLE", "XLB", "XLI", "XLC", "XLU", "XLRE", "XLY"]
 
+# VCP 判定邏輯函數
+def check_vcp(prices, volumes):
+    """
+    簡單 VCP 判定：
+    1. 近 20 天波動率低於近 60 天波動率 (收窄)
+    2. 價格高於 50日及 200日均線 (趨勢向上)
+    3. 成交量在盤整期萎縮
+    """
+    if len(prices) < 200: return "-"
+    
+    recent_volatility = prices.iloc[-20:].std() / prices.iloc[-20:].mean()
+    base_volatility = prices.iloc[-60:].std() / prices.iloc[-60:].mean()
+    
+    sma50 = prices.rolling(50).mean().iloc[-1]
+    sma200 = prices.rolling(200).mean().iloc[-1]
+    
+    # 判定條件：波動收窄 + 價格處於上升趨勢
+    if recent_volatility < base_volatility * 0.7 and prices.iloc[-1] > sma50 > sma200:
+        return "🎯 VCP"
+    return "-"
+
 @st.cache_data(ttl=300)
 def fetch_all_data(tickers, etfs):
     all_syms = list(set(tickers + etfs + ['SPY']))
@@ -53,21 +75,34 @@ tab_watch, tab_etf, tab_sector = st.tabs(["📋 Watchlist", "📉 ETF Basis", "�
 with tab_watch:
     search_q = st.text_input("🔍 搜尋/抓取代碼", "", key="main_search").upper().strip()
     
-    # 計算 RS
     summary = []
     for t in MY_TICKERS:
         if t not in raw_data['Close'].columns: continue
         c = raw_data['Close'][t]
+        v = raw_data['Volume'][t]
         s = raw_data['Close']['SPY']
+        
         rs_3m = ((c/s).iloc[-1] / (c/s).iloc[-63]) - 1
-        summary.append({"Symbol": t, "Price": c.iloc[-1], "Daily %": (c.iloc[-1]/c.iloc[-2])-1, "RS (3M)": rs_3m})
+        
+        # 呼叫 VCP 判定
+        vcp_status = check_vcp(c, v)
+        
+        summary.append({
+            "Symbol": t, 
+            "Price": c.iloc[-1], 
+            "Daily %": (c.iloc[-1]/c.iloc[-2])-1, 
+            "RS (3M)": rs_3m,
+            "Pattern": vcp_status  # 新增一列提示
+        })
     
     df_main = pd.DataFrame(summary).sort_values("RS (3M)", ascending=False)
-    st.dataframe(df_main.style.format({"Price":"${:.2f}","Daily %":"{:+.2%}","RS (3M)":"{:+.2%}"}).background_gradient(subset=["RS (3M)"], cmap="RdYlGn"), use_container_width=True, height=300)
+    # 顯示表格 (格式不變，僅多出一列 Pattern)
+    st.dataframe(df_main.style.format({"Price":"${:.2f}","Daily %":"{:+.2%}","RS (3M)":"{:+.2%}"})
+                 .background_gradient(subset=["RS (3M)"], cmap="RdYlGn"), use_container_width=True, height=300)
 
     st.divider()
 
-    # 圖表邏輯
+    # 圖表邏輯 (保持原有邏輯)
     target = search_q if search_q else df_main['Symbol'].iloc[0]
     
     col_a, col_b, col_c = st.columns([1, 1, 1.2])
@@ -78,8 +113,8 @@ with tab_watch:
     with col_c: 
         st.link_button(f"🚀 TRADINGVIEW: {final_target}", f"https://www.tradingview.com/chart/?symbol={final_target}", use_container_width=True)
 
-    # 抓取繪圖數據 (確保搜尋清單外也行)
     try:
+        # 使用現有繪圖邏輯
         h_all = yf.download([final_target, 'SPY'], period='2y', progress=False)
         days = {"3M": 63, "6M": 126, "1Y": 252}[p_choice]
         h = h_all['Close'][final_target].iloc[-days:]
@@ -90,12 +125,9 @@ with tab_watch:
         spy_c = h_all['Close']['SPY'].iloc[-days:]
 
         fig_main = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.5, 0.2, 0.3])
-        # K線
         fig_main.add_trace(go.Candlestick(x=h.index, open=h_open, high=h_high, low=h_low, close=h, name="Price"), row=1, col=1)
-        # 成交量
         v_colors = ['#ef5350' if h_open.iloc[i] > h.iloc[i] else '#26a69a' for i in range(len(h))]
         fig_main.add_trace(go.Bar(x=h.index, y=h_vol, name="Vol", marker_color=v_colors), row=2, col=1)
-        # RS Line
         fig_main.add_trace(go.Scatter(x=h.index, y=h/spy_c, name="RS Line", line=dict(color='#00e676', width=2)), row=3, col=1)
 
         fig_main.update_layout(height=750, xaxis_rangeslider_visible=False, template="plotly_dark", margin=dict(t=10,b=10))
@@ -103,7 +135,7 @@ with tab_watch:
     except:
         st.error("無法載入該代碼數據")
 
-# --- TAB 2: ETF BASIS ---
+# --- TAB 2 & 3 (保持完全不變) ---
 with tab_etf:
     st.subheader("🇺🇸 S&P 500 (SPY)")
     spy_data = raw_data.xs('SPY', axis=1, level=1).iloc[-126:]
